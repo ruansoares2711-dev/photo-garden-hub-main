@@ -41,16 +41,16 @@ export function CartController() {
   const checkout = async () => {
     setPaying(true);
     try {
-      if (!session?.access_token)
-        throw new Error("Sessão expirada. Entre novamente para continuar.");
-      const { initPoint } = await checkoutFn({
-        data: { origin: window.location.origin },
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      // A chamada CORRETA para um serverFn é passando o payload no campo 'data'
+      const result = await createCheckout({
+        data: { origin: window.location.origin }
       });
-      window.location.href = initPoint;
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Falha ao iniciar o pagamento");
-      setPaying(false);
+
+      if (result?.initPoint) {
+        window.location.href = result.initPoint;
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 

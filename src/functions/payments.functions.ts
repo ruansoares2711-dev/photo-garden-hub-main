@@ -20,86 +20,35 @@ export const createCheckout = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { origin: string }) => z.object({ origin: z.string().url() }).parse(d))
   .handler(async ({ context, data }) => {
+    console.log("LOG: Função createCheckout iniciada!"); // LOG DE TESTE
+    
     const { supabase, userId } = context;
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
-    if (!token) throw new Error("MERCADO_PAGO_ACCESS_TOKEN não configurado");
+    
+    if (!token) {
+      console.error("ERRO: Token não encontrado");
+      throw new Error("MERCADO_PAGO_ACCESS_TOKEN não configurado");
+    }
 
-    // Busca itens do carrinho com fotos (RLS garante que só vê os próprios)
-    const { data: items, error } = await supabase
-      .from("cart_items")
-      .select("photo_id, photos:photo_id ( id, title, price_cents, preview_path )")
-      .eq("user_id", userId);
-    if (error) throw error;
-    if (!items || items.length === 0) throw new Error("Carrinho vazio");
-
-    const photos = ((items ?? []) as CheckoutCartRow[])
-      .map((item) => item.photos)
-      .filter((photo): photo is NonNullable<CheckoutCartRow["photos"]> => Boolean(photo));
-
-    const total = photos.reduce((s, p) => s + p.price_cents, 0);
-
-    // Cria compra pending via admin (insere + items)
-    const { data: purchase, error: pErr } = await supabaseAdmin
-      .from("purchases")
-      .insert({ user_id: userId, status: "pending", total_cents: total })
-      .select()
-      .single();
-    if (pErr || !purchase) throw pErr ?? new Error("Falha ao criar pedido");
-
-    const itemsRows = photos.map((p) => ({
-      purchase_id: purchase.id,
-      photo_id: p.id,
-      price_cents: p.price_cents,
-    }));
-    const { error: piErr } = await supabaseAdmin.from("purchase_items").insert(itemsRows);
-    if (piErr) throw piErr;
-
-    // Cria preferência no MP
-    const mpItems = photos.map((p) => ({
-      id: p.id,
-      title: p.title.slice(0, 250),
-      quantity: 1,
-      currency_id: "BRL",
-      unit_price: Number((p.price_cents / 100).toFixed(2)),
-    }));
-
-    const origin = data.origin;
-    const prefBody = {
-      items: mpItems,
-      external_reference: purchase.id,
-      back_urls: {
-        success: `${origin}/checkout/sucesso?pid=${purchase.id}`,
-        failure: `${origin}/checkout/erro?pid=${purchase.id}`,
-        pending: `${origin}/checkout/pendente?pid=${purchase.id}`,
-      },
-      auto_return: "approved",
-      notification_url: `${origin}/api/public/mp-webhook`,
-    };
+    // ... (restante do código até o fetch)
 
     const res = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        "Authorization": `Bearer ${token}`,
       },
       body: JSON.stringify(prefBody),
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      console.error("MP error", res.status, text);
-      throw new Error(`Mercado Pago falhou: ${res.status}`);
-    }
-    const pref = (await res.json()) as {
-      id: string;
-      init_point: string;
-      sandbox_init_point: string;
-    };
+    const responseText = await res.text();
+    console.log("LOG: Resposta do MP:", res.status, responseText); // LOG DE TESTE
 
-    await supabaseAdmin
-      .from("purchases")
-      .update({ mp_preference_id: pref.id })
-      .eq("id", purchase.id);
+    if (!res.ok) {
+      throw new Error(`Mercado Pago falhou: ${res.status} - ${responseText}`);
+    }
+    
+    const pref = JSON.parse(responseText);
 
     return {
       purchaseId: purchase.id,
